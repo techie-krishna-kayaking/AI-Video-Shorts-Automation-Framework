@@ -19,10 +19,10 @@ channels:
       - "incredible"
       - "look at this"
       - "adventure"
-    upload_enabled: false
+    upload_enabled: true
     youtube:
-      client_secrets: "configs/client_secret_krgd.json"
-      credentials: "configs/credentials_krgd.json"
+      client_secrets: "configs/client_secret_krgd_vlogs.json"
+      credentials: "configs/credentials_krgd_vlogs.json"
       default_tags:
         - "vlog"
         - "gopro"
@@ -100,7 +100,7 @@ channels:
       - "quick tip"
       - "in 60 seconds"
       - "shorts"
-    upload_enabled: false
+    upload_enabled: true
     youtube:
       client_secrets: "configs/client_secret_tkk.json"
       credentials: "configs/credentials_tkk.json"

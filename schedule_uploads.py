@@ -1,0 +1,204 @@
+"""
+Schedule YouTube uploads for all channels.
+
+Rules:
+- Shorts: 3 per day for 3 days at 3:07 PM, 5:07 PM, 7:07 PM (local time)
+- Long-form: 1 every Thursday at 7:07 PM (if available)
+- Sequential order by filename
+- Title = filename stem (cleaned up)
+- Hashtags: #krgdVlog for krgd_vlogs, #TKK for tkk_live_shorts
+"""
+
+from __future__ import annotations
+
+import sys
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from app.uploader import YouTubeUploader
+from app.utils.config import get_config
+from app.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+# --- Configuration ---
+
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")  # Adjust if needed
+
+SHORTS_PER_DAY = 3
+SHORTS_DAYS = 3
+SHORTS_TIMES = [(15, 7), (17, 7), (19, 7)]  # 3:07 PM, 5:07 PM, 7:07 PM
+
+LONGFORM_DAY = 3  # Thursday (0=Mon, 3=Thu)
+LONGFORM_TIME = (19, 7)  # 7:07 PM
+
+# Channel-specific hashtag descriptions
+CHANNEL_HASHTAGS = {
+    "krgd_vlogs": "#krgdVlog #shorts",
+    "tkk_live_shorts": "#TKK #shorts",
+}
+
+# Channels to schedule (only those with output videos)
+CHANNELS_TO_SCHEDULE = ["krgd_vlogs", "tkk_live_shorts"]
+
+
+def clean_title(filename_stem: str) -> str:
+    """Convert filename stem to a readable title."""
+    import re
+
+    title = filename_stem
+
+    # Remove -vertical or _vertical suffix
+    title = re.sub(r"[-_]vertical", "", title)
+    # Remove date-time stamps like 2025-08-13_11-01-35
+    title = re.sub(r"\d{4}-\d{2}-\d{2}[_-]\d{2}[_-]\d{2}[_-]\d{2}", "", title)
+    # Replace underscores and hyphens with spaces
+    title = title.replace("_", " ").replace("-", " ")
+    # Collapse multiple spaces
+    title = re.sub(r"\s+", " ", title)
+    # Capitalize words
+    title = title.strip().title()
+    return title
+
+
+def get_shorts_schedule(start_date: datetime) -> list[datetime]:
+    """Generate publish times for shorts over the next N days."""
+    schedule = []
+    for day_offset in range(SHORTS_DAYS):
+        day = start_date + timedelta(days=day_offset + 1)  # Start tomorrow
+        for hour, minute in SHORTS_TIMES:
+            publish_at = day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            schedule.append(publish_at)
+    return schedule
+
+
+def get_next_thursday(start_date: datetime) -> datetime:
+    """Get the next Thursday at 7:07 PM from start_date."""
+    days_ahead = LONGFORM_DAY - start_date.weekday()
+    if days_ahead <= 0:
+        days_ahead += 7
+    next_thu = start_date + timedelta(days=days_ahead)
+    hour, minute = LONGFORM_TIME
+    return next_thu.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def is_longform(video_path: Path) -> bool:
+    """Check if a video is long-form (not a part/clip)."""
+    name = video_path.stem.lower()
+    # If it doesn't have _partXXX suffix, it's likely long-form
+    return "part" not in name and "vertical" not in name
+
+
+def schedule_channel(channel_name: str, dry_run: bool = True) -> None:
+    """Schedule uploads for a single channel."""
+    config = get_config()
+    channel_config = config.channels.get(channel_name)
+    if not channel_config:
+        print(f"  [SKIP] Channel '{channel_name}' not found in config")
+        return
+
+    output_dir = Path(channel_config.output_folder)
+    if not output_dir.exists():
+        print(f"  [SKIP] Output folder not found: {output_dir}")
+        return
+
+    # Separate shorts from long-form
+    all_videos = sorted(output_dir.glob("*.mp4"))
+    shorts = [v for v in all_videos if not is_longform(v)]
+    longforms = [v for v in all_videos if is_longform(v)]
+
+    # If all videos look like parts/shorts, use them all as shorts
+    if not shorts and all_videos:
+        shorts = all_videos
+
+    hashtags = CHANNEL_HASHTAGS.get(channel_name, "")
+    default_tags = channel_config.youtube.default_tags if channel_config.youtube else []
+
+    now = datetime.now(LOCAL_TZ)
+    print(f"\n  Channel: {channel_config.name}")
+    print(f"  Shorts available: {len(shorts)}")
+    print(f"  Long-form available: {len(longforms)}")
+
+    # --- Schedule Shorts ---
+    shorts_times = get_shorts_schedule(now)
+    shorts_to_schedule = shorts[: len(shorts_times)]  # Cap at available slots
+
+    print(f"\n  Shorts Schedule ({len(shorts_to_schedule)} videos):")
+    print(f"  {'─' * 60}")
+
+    uploads = []
+    for idx, (video, publish_at) in enumerate(zip(shorts_to_schedule, shorts_times)):
+        title = f"{clean_title(video.stem)} {hashtags}"
+        print(f"  {idx+1:2d}. {video.name}")
+        print(f"      Title: {title}")
+        print(f"      Publish: {publish_at.strftime('%a %b %d, %Y at %I:%M %p %Z')}")
+        uploads.append((video, title, publish_at))
+
+    # --- Schedule Long-form ---
+    if longforms:
+        next_thu = get_next_thursday(now)
+        lf = longforms[0]
+        title = f"{clean_title(lf.stem)} {hashtags}"
+        print(f"\n  Long-form Schedule:")
+        print(f"  {'─' * 60}")
+        print(f"  1. {lf.name}")
+        print(f"     Title: {title}")
+        print(f"     Publish: {next_thu.strftime('%a %b %d, %Y at %I:%M %p %Z')}")
+        uploads.append((lf, title, next_thu))
+
+    if dry_run:
+        print(f"\n  [DRY RUN] No uploads performed. Run with --execute to upload.")
+        return
+
+    # --- Execute Uploads ---
+    print(f"\n  Uploading to YouTube...")
+    uploader = YouTubeUploader(channel_name)
+    uploader.authenticate()
+
+    success_count = 0
+    for video, title, publish_at in uploads:
+        publish_iso = publish_at.isoformat()
+        print(f"  Uploading: {video.name}...", end=" ", flush=True)
+        result = uploader.upload(
+            video_path=video,
+            title=title,
+            description=f"{clean_title(video.stem)}\n\n{hashtags}",
+            tags=default_tags + [h.strip("#") for h in hashtags.split()],
+            privacy_status="private",
+            publish_at=publish_iso,
+        )
+        if result.success:
+            print(f"✓ ({result.url})")
+            success_count += 1
+        else:
+            print(f"✗ ({result.error})")
+
+    print(f"\n  Done! {success_count}/{len(uploads)} uploaded successfully.")
+
+
+def main():
+    dry_run = "--execute" not in sys.argv
+
+    print("=" * 64)
+    print(" YouTube Upload Scheduler")
+    print("=" * 64)
+    print(f" Mode: {'DRY RUN (preview)' if dry_run else 'EXECUTING UPLOADS'}")
+    print(f" Date: {datetime.now(LOCAL_TZ).strftime('%a %b %d, %Y %I:%M %p %Z')}")
+    print(f" Schedule: {SHORTS_PER_DAY} shorts/day × {SHORTS_DAYS} days")
+    print(f"           Times: {', '.join(f'{h}:{m:02d}' for h, m in SHORTS_TIMES)}")
+    print(f"           Long-form: Thursdays at {LONGFORM_TIME[0]}:{LONGFORM_TIME[1]:02d}")
+    print("=" * 64)
+
+    for channel in CHANNELS_TO_SCHEDULE:
+        schedule_channel(channel, dry_run=dry_run)
+
+    print("\n" + "=" * 64)
+    if dry_run:
+        print(" To execute uploads, run:")
+        print("   python3 schedule_uploads.py --execute")
+    print("=" * 64)
+
+
+if __name__ == "__main__":
+    main()

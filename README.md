@@ -107,13 +107,14 @@
 1. [Tech Stack](#️-tech-stack)
 2. [Multi-Channel Architecture](#-multi-channel-architecture)
 3. [Long-form Video Generation](#-long-form-video-generation)
-4. [macOS Setup (All Steps)](#-macos-complete-setup)
-5. [Windows Setup (All Steps)](#-windows-complete-setup)
-6. [YouTube API & Credentials Setup](#youtube-api--credentials-setup)
-7. [Configuration Reference](#configuration-reference)
-8. [Architecture & Pipeline](#architecture)
-9. [Docker (Linux Servers)](#docker-linux-servers)
-10. [Troubleshooting](#troubleshooting)
+4. [Scheduled Uploads](#-scheduled-uploads)
+5. [macOS Setup (All Steps)](#-macos-complete-setup)
+6. [Windows Setup (All Steps)](#-windows-complete-setup)
+7. [YouTube API & Credentials Setup](#youtube-api--credentials-setup)
+8. [Configuration Reference](#configuration-reference)
+9. [Architecture & Pipeline](#architecture)
+10. [Docker (Linux Servers)](#docker-linux-servers)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -302,6 +303,99 @@ After long-form generation completes, a detailed report prints:
       Duration: 78.2 min | Size: 2304 MB
 
 ══════════════════════════════════════════════════════════════
+```
+
+---
+---
+
+## 📅 Scheduled Uploads
+
+The framework includes an intelligent upload scheduler (`schedule_uploads.py`) that distributes Shorts and long-form uploads across days with specific time slots per channel.
+
+### Schedule Rules
+
+| Type | Frequency | Times (Local) |
+|------|-----------|---------------|
+| **Shorts** | 3 per day × 3 days | 3:07 PM, 5:07 PM, 7:07 PM |
+| **Long-form** | 1 per Thursday | 7:07 PM |
+
+### Channel Hashtags
+
+Each channel automatically appends its hashtag to video titles:
+
+| Channel | Hashtag |
+|---------|---------|
+| `krgd_vlogs` | `#krgdVlog #shorts` |
+| `tkk_live_shorts` | `#TKK #shorts` |
+
+### How It Works
+
+1. Videos are picked from each channel's output folder in **sequential filename order**
+2. Titles are auto-generated from filenames (cleaned: underscores → spaces, timestamps removed, title-cased)
+3. Videos are uploaded as **private** with a `publishAt` schedule time
+4. YouTube auto-publishes them at the scheduled time
+5. Long-form videos are only scheduled if available (non-part files in the output folder)
+
+### Usage
+
+```bash
+# Preview the schedule (dry run — no uploads)
+python3 schedule_uploads.py
+
+# Execute uploads for real
+python3 schedule_uploads.py --execute
+```
+
+### Example Output (Dry Run)
+
+```
+================================================================
+ YouTube Upload Scheduler
+================================================================
+ Mode: DRY RUN (preview)
+ Date: Thu May 28, 2026 05:33 AM PDT
+ Schedule: 3 shorts/day × 3 days
+           Times: 15:07, 17:07, 19:07
+           Long-form: Thursdays at 19:07
+================================================================
+
+  Channel: krgd vlogs
+  Shorts available: 5
+
+  Shorts Schedule (5 videos):
+  ────────────────────────────────────────────────────────────
+   1. gh011244_part001.mp4
+      Title: Gh011244 Part001 #krgdVlog #shorts
+      Publish: Fri May 29, 2026 at 03:07 PM PDT
+   2. gh011244_part002.mp4
+      Title: Gh011244 Part002 #krgdVlog #shorts
+      Publish: Fri May 29, 2026 at 05:07 PM PDT
+   ...
+
+  Channel: TKK Live & Shorts
+  Shorts available: 78
+
+  Shorts Schedule (9 videos):
+  ────────────────────────────────────────────────────────────
+   1. azure_..._part001.mp4
+      Title: Azure Insurance Project Part 1 Part001 #TKK #shorts
+      Publish: Fri May 29, 2026 at 03:07 PM PDT
+   ...
+================================================================
+```
+
+### Configuration
+
+Edit the constants at the top of `schedule_uploads.py` to adjust:
+
+```python
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")  # Your timezone
+SHORTS_PER_DAY = 3                          # Shorts per day
+SHORTS_DAYS = 3                             # Number of days to schedule
+SHORTS_TIMES = [(15, 7), (17, 7), (19, 7)]  # Upload times (hour, minute)
+LONGFORM_DAY = 3                            # 0=Mon, 3=Thu, 6=Sun
+LONGFORM_TIME = (19, 7)                     # Long-form upload time
+CHANNELS_TO_SCHEDULE = ["krgd_vlogs", "tkk_live_shorts"]
 ```
 
 ---

@@ -201,7 +201,9 @@ def schedule_channel(channel_name: str, dry_run: bool = True, history: dict | No
 
     success_count = 0
     for video, title, publish_at in uploads:
-        publish_iso = publish_at.isoformat()
+        # YouTube API requires publishAt in UTC ISO 8601 format
+        publish_utc = publish_at.astimezone(ZoneInfo("UTC"))
+        publish_iso = publish_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
         is_lf = is_longform(video)
         hashtags = hashtags_longform if is_lf else hashtags_shorts
         print(f"  Uploading: {video.name}...", end=" ", flush=True)

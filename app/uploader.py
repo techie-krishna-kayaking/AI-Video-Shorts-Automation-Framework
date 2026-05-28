@@ -228,12 +228,17 @@ class YouTubeUploader:
         """Execute resumable upload with exponential backoff retry."""
         response = None
         retry = 0
+        last_logged_pct = -10  # Track last logged percentage to avoid spam
 
         while response is None:
             try:
                 status, response = request.next_chunk()
                 if status:
-                    logger.info("upload_progress", progress=f"{status.progress() * 100:.1f}%")
+                    pct = int(status.progress() * 100)
+                    # Only log at 10% intervals to avoid terminal spam
+                    if pct >= last_logged_pct + 10:
+                        logger.info("upload_progress", progress=f"{pct}%")
+                        last_logged_pct = pct
             except httplib2.HttpLib2Error as e:
                 if retry >= MAX_RETRIES:
                     logger.error("upload_max_retries", error=str(e))
